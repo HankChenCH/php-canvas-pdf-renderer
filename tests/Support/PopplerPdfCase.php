@@ -27,6 +27,27 @@ abstract class PopplerPdfCase extends TestCase
     protected const YELLOW = [255, 255, 0];
     protected const WHITE = [255, 255, 255];
 
+    /**
+     * CJK 探针字体：环境变量优先 → 系统 TTF 候选 → markTestSkipped 留指引
+     * （镜像 go 侧纪律；只认单体 TTF——TTC 会被魔数防线拒收）
+     */
+    protected static function probeCjkFont(): string
+    {
+        $env = getenv('CANVAS_PDF_TEST_CJK_FONT');
+        if (is_string($env) && $env !== '' && is_file($env)) {
+            return $env;
+        }
+        foreach ([
+            '/usr/share/fonts/truetype/ipafont-gothic/ipag.ttf',
+            '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
+        ] as $candidate) {
+            if (is_file($candidate)) {
+                return $candidate;
+            }
+        }
+        self::markTestSkipped('本机无单体 CJK TTF：设 CANVAS_PDF_TEST_CJK_FONT=<单体 .ttf>（TTC 不支持；CI 装 fonts-ipafont-gothic）后重跑');
+    }
+
     /** 经标准管线渲染整画布（单页 render 模板），产物断言为非空 PDF 字节串 */
     protected static function renderCanvas(Canvas $canvas): string
     {

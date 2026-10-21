@@ -73,27 +73,6 @@ class PdfTextTest extends PopplerPdfCase
         return self::rasterize($pdf, $width, $height);
     }
 
-    /**
-     * CJK 探针字体：环境变量优先 → 系统 TTF 候选 → markTestSkipped 留指引
-     * （镜像 go 侧纪律；只认单体 TTF——TTC 会被魔数防线拒收）
-     */
-    private static function probeCjkFont(): string
-    {
-        $env = getenv('CANVAS_PDF_TEST_CJK_FONT');
-        if (is_string($env) && $env !== '' && is_file($env)) {
-            return $env;
-        }
-        foreach ([
-            '/usr/share/fonts/truetype/ipafont-gothic/ipag.ttf',
-            '/System/Library/Fonts/Supplemental/Arial Unicode.ttf',
-        ] as $candidate) {
-            if (is_file($candidate)) {
-                return $candidate;
-            }
-        }
-        self::markTestSkipped('本机无单体 CJK TTF：设 CANVAS_PDF_TEST_CJK_FONT=<单体 .ttf>（TTC 不支持；CI 装 fonts-ipafont-gothic）后重跑');
-    }
-
     /** 写一个垃圾字节字体夹具并返回路径 */
     private static function writeFontFixture(string $name, string $bytes): string
     {
