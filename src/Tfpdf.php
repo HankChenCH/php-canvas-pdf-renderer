@@ -24,11 +24,62 @@ namespace HankChen\CanvasNext\Renderer\Pdf;
  *  - AddFont($family,$style,$file,true) 的 $file 按 tFPDF 规则相对 fontpath/unifont/ 解析
  *    （或 _SYSTEM_TTFONTS 前缀）；metrics 缓存（.mtx.php/.cw.dat）写在 fontpath/unifont/ 下、
  *    以 $file 去扩展名的 basename 命名（跨目录同名文件有碰撞面，集成时用合成名规避）。
+ *  - fontDir()：进程级字体目录装配（FPDF_FONTPATH → 本包临时目录，构造期先行触发）——
+ *    渲染器的字体落位（合成名软链/复制进 unifont/）与核心字体 metric 同源于此。
  */
 class Tfpdf extends \tFPDF
 {
     /** ExtGState 注册表（addon #74：序号 => ['parms'=>ca/CA/BM, 'n'=>对象号]） */
     protected array $extgstates = [];
+
+    /** 进程级字体目录缓存（fontDir() 装配一次，形态与 FPDF_FONTPATH 惯例一致：尾带斜杠） */
+    private static ?string $fontDir = null;
+
+    public function __construct($orientation = 'P', $unit = 'mm', $size = 'A4')
+    {
+        // FPDF_FONTPATH 在父构造期读取——装配必须先于 parent::__construct，
+        // 保证本进程所有实例（核心字体 metric + unifont 解析 + metrics 缓存）同源
+        self::fontDir();
+        parent::__construct($orientation, $unit, $size);
+    }
+
+    /**
+     * 字体目录装配（进程级一次）：FPDF_FONTPATH 指向本包管理的临时目录——
+     * tFPDF 的 AddFont($file) 相对 fontpath/unifont/ 解析、metrics 缓存写在
+     * fontpath/unifont/ 下、核心字体 metric 从 fontpath/ include，三处必须同源
+     * （spike 实测：绝对路径直传 AddFont 会被拼成 fontpath/unifont/<绝对路径>
+     * 后 fopen 失败 die——字体必须以合成名落位此目录、basename 进 AddFont）。
+     * 缺省目录 = 系统临时目录/canvas-pdf-renderer-fonts：核心字体 metric 自
+     * vendor 软链（失败退回复制），unifont/ 为运行时字体落位与缓存工作区。
+     * 宿主已定义 FPDF_FONTPATH 时按宿主配置走（不重定义、不写 vendor）。
+     */
+    public static function fontDir(): string
+    {
+        if (self::$fontDir !== null) {
+            return self::$fontDir;
+        }
+        if (defined('FPDF_FONTPATH')) {
+            return self::$fontDir = FPDF_FONTPATH;
+        }
+
+        $dir = sys_get_temp_dir() . '/canvas-pdf-renderer-fonts';
+        if (!is_dir($dir . '/unifont') && !@mkdir($dir . '/unifont', 0755, true) && !is_dir($dir . '/unifont')) {
+            throw new \RuntimeException("字体目录创建失败: {$dir}/unifont");
+        }
+        $vendorFont = dirname((new \ReflectionClass(\tFPDF::class))->getFileName()) . '/font';
+        foreach (glob($vendorFont . '/*.php') ?: [] as $metric) {
+            $target = $dir . '/' . basename($metric);
+            if (is_file($target)) {
+                continue;
+            }
+            if (!@symlink($metric, $target) && !@copy($metric, $target)) {
+                throw new \RuntimeException("核心字体 metric 落位失败: {$metric} → {$target}");
+            }
+        }
+        define('FPDF_FONTPATH', $dir . '/');
+
+        return self::$fontDir = $dir . '/';
+    }
 
     // ==================== Transparency addon（fpdf.org script #74 原文并入） ====================
 

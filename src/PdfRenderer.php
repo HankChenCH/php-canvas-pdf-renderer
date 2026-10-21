@@ -11,7 +11,7 @@ use HankChen\CanvasNext\Renderer\AbstractRenderer;
 /**
  * PDF 渲染后端：以 tFPDF 新建单文档为渲染面，实现五个绘制原语接入渲染模板；
  * 承载 PNG/JPEG 魔数嗅探一等直嵌（零重编码；GIF 拒收）、clip 算子裁窗 + EXIF
- * 放置矩阵归正、TTF 子集内嵌文本（完整语义落文本票，本段最小接线）。
+ * 放置矩阵归正、TTF 子集内嵌文本（TTF-only 魔数门槛 + 对齐锚点落笔 + 角度旋转）。
  * 对位 `php-canvas-image-renderer` 位图后端、语义镜像 `go-canvas/pdf-renderer`。
  *
  * 单位契约：核心接口坐标恒为抽象像素，px→pt 换算责任全在后端（96dpi 口径，
@@ -29,6 +29,16 @@ final class PdfRenderer extends AbstractRenderer implements ShapeCapableRenderer
 {
     /** px→pt 换算系数（96dpi 口径：pt = px × 72/96） */
     private const PX_TO_PT = 0.75;
+
+    /**
+     * Helvetica 核心字体垂直 metrics（per-1000，Adobe Helvetica AFM 规范值：
+     * Ascender 718 / Descender −207）。核心字体不走 TTF 解析、tFPDF 的 metric
+     * 文件不定义 desc（spike 实测：fonts['helvetica'] 无 desc 键），以常量持有
+     * ——PDF 标准字体度量是规范值，非实现细节（镜像 go text.go 同款常量）
+     */
+    private const HELVETICA_ASCENT_PER_EM = 718;
+
+    private const HELVETICA_DESCENT_PER_EM = -207;
 
     private ?Tfpdf $doc = null;
 
@@ -416,10 +426,21 @@ final class PdfRenderer extends AbstractRenderer implements ShapeCapableRenderer
     }
 
     /**
-     * 绘制单行文本，(x, y) 为 align 语义下的锚点——**本段最小接线**：签名与
-     * 防线（未建面用法错误）就位，完整文本语义（TTF 魔数嗅探 + 子集内嵌 + 对齐
-     * 锚点落笔 + 角度旋转，镜像 go-canvas/pdf-renderer text.go）落下一票，届时
-     * 本体消费 $fonts 注册表（end 随会话复位）。
+     * 绘制单行文本，(x, y) 为 align 语义下的锚点（镜像 go-canvas/pdf-renderer
+     * text.go）：
+     *  - 空行零副作用（空串守卫，色/字号防线不触达）；
+     *  - 字体分派：fontFile 空串/纯数字 = 内置默认字体语义 → 核心字体 Helvetica
+     *    （ASCII-only 兜底，语义对齐 image 侧内置默认字体与 go basicfont）；其余
+     *    走 ResourceResolver 物化路径的 TTF 子集内嵌（CJK 硬门槛，registerFont）；
+     *  - 水平对齐偏移 = GetStringWidth 实测宽度（与落笔 Tj 同一度量路径，不引
+     *    第二套字体栈）：left 0 / center −宽/2 / right −宽，未知取值归 left；
+     *  - 垂直基线 = 锚点 + metrics 偏移：top +ascent / center (ascent+descent)/2 /
+     *    bottom −descent（descent 为负），未知取值归 top（image 侧同一公式）；
+     *  - 单位口径红线：锚点坐标 ×0.75；对齐偏移（实测宽度/metrics）已是 pt
+     *    **不再乘**——混乘 = 对齐整体缩水 0.75（go 踩坑前置进包 AGENTS.md）；
+     *  - 角度正值逆时针绕锚点（TransformRotate 包裹，对齐偏移随落笔点一起旋转，
+     *    视觉方向以 poppler 栅格实测标定）；字色 alpha 经 ExtGState 挂载、画完
+     *    SetAlpha(1) 恢复防残留（spike 实测 alpha 对文本墨迹生效）。
      */
     protected function drawText(
         string $line,
@@ -432,6 +453,140 @@ final class PdfRenderer extends AbstractRenderer implements ShapeCapableRenderer
         string $verticalAlign,
         int $angle
     ): void {
-        $this->doc();
+        $doc = $this->doc();
+        if ($line === '') {
+            return;
+        }
+        try {
+            $c = Rgba::parse($fontColor);
+        } catch (\InvalidArgumentException $e) {
+            throw new \InvalidArgumentException("解析字色: {$e->getMessage()}", 0, $e);
+        }
+
+        $sizePt = $fontSize * self::PX_TO_PT;
+        if ($sizePt <= 0) {
+            throw new \InvalidArgumentException("字号非法: {$fontSize}");
+        }
+
+        // 字体分派 + per-1000 metrics 归一到本字号 pt（核心字体走 AFM 常量兜底，
+        // TTF 走 desc；descent 为负，基线公式依赖此符号约定）
+        if ($fontFile === '' || is_numeric($fontFile)) {
+            $doc->SetFont('helvetica', '', $sizePt);
+            $ascentPt = self::HELVETICA_ASCENT_PER_EM / 1000 * $sizePt;
+            $descentPt = self::HELVETICA_DESCENT_PER_EM / 1000 * $sizePt;
+        } else {
+            $family = $this->registerFont($doc, $fontFile);
+            $doc->SetFont($family, '', $sizePt);
+            $desc = $doc->getFontDesc($family);
+            if ($desc === null) {
+                throw new \RuntimeException("注册字体 {$fontFile}: 字体解析失败(TTF 格式不合法或为 tFPDF 不支持的变体)");
+            }
+            $ascentPt = (float) $desc['Ascent'] / 1000 * $sizePt;
+            $descentPt = (float) $desc['Descent'] / 1000 * $sizePt;
+        }
+
+        // 水平：笔起点相对锚点的偏移（未知取值归 left——match 缺省臂）
+        $widthPt = $doc->GetStringWidth($line);
+        $penX = match ($horizontalAlign) {
+            'center' => -$widthPt / 2,
+            'right' => -$widthPt,
+            default => 0.0,
+        };
+
+        // 垂直：基线相对锚点的偏移，由字体 metrics 消化基线差（未知取值归 top）
+        $baselineY = match ($verticalAlign) {
+            'center' => ($ascentPt + $descentPt) / 2,
+            'bottom' => -$descentPt,
+            default => $ascentPt,
+        };
+
+        // 锚点 px→pt；对齐偏移（penX/baselineY）已由实测宽度/metrics 以 pt 计，
+        // 不再乘换算系数——单位混乘会把对齐整体缩水 0.75 倍
+        $tx = $x * self::PX_TO_PT + $penX;
+        $ty = $y * self::PX_TO_PT + $baselineY;
+
+        $doc->SetAlpha($c->a / 255, 'Normal');
+        $doc->SetTextColor($c->r, $c->g, $c->b);
+        if ($angle === 0) {
+            $doc->Text($tx, $ty, $line);
+        } else {
+            // 正值逆时针绕锚点旋转：Rotate 在 PDF 原生空间(y 向上)构造标准逆时针
+            // 阵,视觉方向与位图后端(y 向下空间 [[cos,sin],[-sin,cos]])一致;
+            // 对齐偏移随落笔点一起绕锚点旋转（addq cm Q 包裹, TransformRotate 对位）
+            $doc->StartTransform();
+            $doc->Rotate($angle, $x * self::PX_TO_PT, $y * self::PX_TO_PT);
+            $doc->Text($tx, $ty, $line);
+            $doc->StopTransform();
+        }
+        $doc->SetAlpha(1, 'Normal');
+    }
+
+    /**
+     * 注册 TTF 子集内嵌字体，返回合成字体族名（镜像 go text.go addUTF8Font）：
+     *  - 魔数嗅探前置（TTF-only 硬门槛）：ttcf/OTTO(CFF)/版本魔数外在 tFPDF 内部
+     *    是进程级 die() 硬退（ttfonts.php getMetrics——不可 try/catch、无错误位），
+     *    应用层必须先拒收为可读异常，绝不能让 die() 发生。合法魔数 = 0x00010000 /
+     *    'true'（与 ttfonts 白名单同面）；嗅探只保魔数级命——魔数过而结构损坏的
+     *    字体仍可能触发 tFPDF 内部 die，属已知残面（与 spike 结论一致）；
+     *  - 字体落位：合成名（safeFamilyName，sha256 前 16 位）软链/复制进字体目录
+     *    unifont/，basename 进 AddFont——原始路径直传会被拼坏（见 Tfpdf::fontDir）；
+     *    metrics 缓存以合成名键，跨目录同名无碰撞；
+     *  - 同一路径本会话只注册一次（$fonts 表，end 随会话复位）；tFPDF 按字体键
+     *    去重，整文档同一字体只嵌一份子集；
+     *  - 族名不进 PDF 字节（/BaseFont = 字体内部 fullName），合成仍属纪律——
+     *    防任何把路径写进 Name 对象的回归（go 踩坑前置）。
+     */
+    private function registerFont(Tfpdf $doc, string $fontFile): string
+    {
+        if (isset($this->fonts[$fontFile])) {
+            return $this->fonts[$fontFile]; // 本会话已注册
+        }
+
+        $data = @file_get_contents($fontFile);
+        if ($data === false) {
+            throw new \RuntimeException("读取字体 {$fontFile} 失败");
+        }
+        $magic = substr($data, 0, 4);
+        if ($magic === 'ttcf') {
+            throw new \InvalidArgumentException("字体 {$fontFile} 为 TTC/OTC 字体集:PDF 子集内嵌仅支持单体 TTF");
+        }
+        if ($magic === 'OTTO') {
+            throw new \InvalidArgumentException("字体 {$fontFile} 为 CFF/PostScript 轮廓(OTF):仅支持 TrueType(glyf) 单体 .ttf");
+        }
+        $version = (int) (unpack('N', str_pad($magic, 4, "\x00"))[1] ?? 0);
+        if (!in_array($version, [0x00010000, 0x74727565], true)) {
+            $magicHex = strtoupper(bin2hex($magic));
+            throw new \InvalidArgumentException("字体 {$fontFile} 不是 TrueType 字体(魔数 0x{$magicHex} 不识):TTF-only 门槛拒收");
+        }
+
+        $family = $doc->safeFamilyName($fontFile);
+        $file = $this->materializeFontFile($fontFile, $family);
+        $doc->AddFont($family, '', $file, true);
+        if ($doc->getFontDesc($family) === null) {
+            throw new \RuntimeException("注册字体 {$fontFile}: 字体解析失败(TTF 格式不合法或为 tFPDF 不支持的变体)");
+        }
+
+        return $this->fonts[$fontFile] = $family;
+    }
+
+    /**
+     * 字体落位：以合成名软链进字体目录 unifont/（大字体零复制；软链失败退回复制，
+     * 如 Windows 无 symlink），返回 AddFont 入参形态的合成 basename。目标已存在但
+     * 为悬空软链（源被清理）时重建。同一源路径哈希同名——跨会话复用落位与缓存。
+     */
+    private function materializeFontFile(string $fontFile, string $family): string
+    {
+        $unifont = Tfpdf::fontDir() . 'unifont';
+        if (!is_dir($unifont) && !@mkdir($unifont, 0755, true) && !is_dir($unifont)) {
+            throw new \RuntimeException("字体目录创建失败: {$unifont}");
+        }
+        $target = $unifont . '/' . $family . '.ttf';
+        if (!is_file($target)) {
+            if (!@symlink($fontFile, $target) && !@copy($fontFile, $target)) {
+                throw new \RuntimeException("字体落位失败: {$fontFile} → {$target}");
+            }
+        }
+
+        return $family . '.ttf';
     }
 }

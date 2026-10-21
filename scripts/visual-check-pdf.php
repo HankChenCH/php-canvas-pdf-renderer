@@ -16,18 +16,9 @@ use HankChen\CanvasNext\Renderer\Pdf\Tfpdf;
 
 $out = $argv[1] ?? __DIR__ . '/../visual-check.pdf';
 
-// 字体路径隔离（可写 unifont 有 metrics 缓存；核心字体 metric 文件复制就位）
-$fontDir = sys_get_temp_dir() . '/canvas-pdf-renderer-visual-fonts';
-if (!is_dir($fontDir . '/unifont')) {
-    mkdir($fontDir . '/unifont', 0777, true);
-    $vendorFont = dirname((new ReflectionClass(\tFPDF::class))->getFileName()) . '/font';
-    foreach (glob($vendorFont . '/*.php') ?: [] as $f) {
-        copy($f, $fontDir . '/' . basename($f));
-    }
-}
-if (!defined('FPDF_FONTPATH')) {
-    define('FPDF_FONTPATH', $fontDir . '/');
-}
+// 字体目录走运行时装配（Tfpdf::fontDir()：可写 unifont + 核心字体 metric 在位 +
+// FPDF_FONTPATH 定义；与测试/渲染器同一条路径，metrics 缓存不写 vendor/）
+$fontDir = Tfpdf::fontDir();
 
 // CJK 探针：环境变量 → 系统 TTF 候选 → null（降级 Helvetica）
 $cjk = getenv('CANVAS_PDF_VISUAL_FONT') ?: null;
@@ -146,7 +137,17 @@ $tiled = $layer(100, 100, '#ffffff')->setImage($tile)->setFit(\HankChen\CanvasNe
     ->setPosition(140, 30);
 $cover = $layer(220, 60, '#ffffff')->setImage($band)->setFit(\HankChen\CanvasNext\Layer\ImageLayer::FIT_COVER)
     ->setPosition(20, 150);
-$canvas = \HankChen\CanvasNext\Canvas::make(260, 230, $cover, $tiled, $circle);
+
+// 文本臂（TTF 子集内嵌 CJK / Helvetica 兜底）+ QR 臂（endroid PNG 哨兵直嵌）
+$textFont = $cjk ?: '';
+$text = \HankChen\CanvasNext\Layer\TextLayer::make(170, 60)
+    ->setPosition(20, 220)
+    ->setText($cjk ? '证书 · 文本臂目验 Cert 123' : 'Text arm fallback Cert 123')
+    ->setFont($textFont, 16, '#202020')
+    ->setHorizontalAlign('left')->setVerticalAlign('top')->setPadding(4);
+$qr = \HankChen\CanvasNext\Layer\QrCodeLayer::make(50, 50)->setPosition(200, 225)->setText('php-canvas');
+
+$canvas = \HankChen\CanvasNext\Canvas::make(260, 300, $cover, $tiled, $circle, $text, $qr);
 $canvas->setBackground(\HankChen\CanvasNext\CanvasBackground::make('#f2f2ee'));
 $product = (new \HankChen\CanvasNext\Renderer\Pdf\PdfRenderer())->render(
     new \HankChen\CanvasNext\Runtime\NullCancellation(),
