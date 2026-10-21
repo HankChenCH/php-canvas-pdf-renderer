@@ -53,7 +53,9 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          extensions: mbstring, exif, intl
+          # gd 仅测试夹具编码用（JPEG 无纯 PHP 编码器，镜像 go 侧 stdlib jpeg.Encode
+          # 手法）；包运行时零 GD 红线不动——composer require 无 ext-gd、src/ 零引用
+          extensions: mbstring, exif, intl, gd
           coverage: none
 
       # CJK 探针字体（开放点 6 定稿）：与 go 侧同字体（fonts-ipafont-gothic，单体 .ttf

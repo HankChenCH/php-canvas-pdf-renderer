@@ -111,6 +111,50 @@ $bytes = $pdf->Output('S');
 file_put_contents($out, $bytes);
 echo "PDF  : {$out} (" . strlen($bytes) . " bytes)\n";
 
+// ---- 渲染器管线样张（PdfRenderer：背景/直嵌/圆形档/tile，走标准模板）----
+$rendererOut = preg_replace('/\.pdf$/', '-renderer.pdf', $out);
+$fixDir = sys_get_temp_dir() . '/canvas-pdf-renderer-visual-fixtures';
+if (!is_dir($fixDir)) {
+    mkdir($fixDir, 0777, true);
+}
+$png = static function (int $w, int $h, \Closure $pixel) use ($fixDir): string {
+    static $n = 0;
+    $chunk = static function (string $type, string $data): string {
+        return pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
+    };
+    $raw = '';
+    for ($y = 0; $y < $h; $y++) {
+        $raw .= "\x00";
+        for ($x = 0; $x < $w; $x++) {
+            $raw .= pack('C3', ...$pixel($x, $y));
+        }
+    }
+    $path = $fixDir . '/vis-' . (++$n) . '.png';
+    file_put_contents($path, "\x89PNG\r\n\x1a\n" . $chunk('IHDR', pack('N2C5', $w, $h, 8, 2, 0, 0, 0)) . $chunk('IDAT', (string) gzcompress($raw)) . $chunk('IEND', ''));
+    return $path;
+};
+$band = $png(100, 100, static fn (int $x, int $y): array => $y < 50 ? [230, 60, 60] : [60, 90, 200]);
+$tile = $png(40, 40, static fn (int $x, int $y): array => [250, 200, 60]);
+
+$layer = static function (int $w, int $h, ?string $bg = null): \HankChen\CanvasNext\Layer\ImageLayer {
+    $l = \HankChen\CanvasNext\Layer\ImageLayer::make($w, $h, $bg);
+    return $l;
+};
+$circle = $layer(100, 100, '#ffffff')->setImage($band)->setClip(\HankChen\CanvasNext\Layer\ImageLayer::CLIP_CIRCLE)
+    ->setPadding(10)->setBorder(6, '#202020')->setPosition(20, 30);
+$tiled = $layer(100, 100, '#ffffff')->setImage($tile)->setFit(\HankChen\CanvasNext\Layer\ImageLayer::FIT_TILE)
+    ->setPosition(140, 30);
+$cover = $layer(220, 60, '#ffffff')->setImage($band)->setFit(\HankChen\CanvasNext\Layer\ImageLayer::FIT_COVER)
+    ->setPosition(20, 150);
+$canvas = \HankChen\CanvasNext\Canvas::make(260, 230, $cover, $tiled, $circle);
+$canvas->setBackground(\HankChen\CanvasNext\CanvasBackground::make('#f2f2ee'));
+$product = (new \HankChen\CanvasNext\Renderer\Pdf\PdfRenderer())->render(
+    new \HankChen\CanvasNext\Runtime\NullCancellation(),
+    $canvas
+);
+file_put_contents($rendererOut, $product);
+echo "PDF  : {$rendererOut} (" . strlen($product) . " bytes)\n";
+
 // pdftoppm 预览（poppler 缺席跳过）
 $ppm = 'pdftoppm';
 if (shell_exec("command -v $ppm") === null) {
@@ -120,5 +164,10 @@ if (shell_exec("command -v $ppm") === null) {
 $prefix = preg_replace('/\.pdf$/', '', $out);
 shell_exec(escapeshellcmd($ppm) . ' -r 96 -png ' . escapeshellarg($out) . ' ' . escapeshellarg($prefix));
 foreach (glob($prefix . '-*.png') ?: [] as $png) {
+    echo "预览 : {$png}\n";
+}
+$rendererPrefix = preg_replace('/\.pdf$/', '', $rendererOut);
+shell_exec(escapeshellcmd($ppm) . ' -r 96 -png ' . escapeshellarg($rendererOut) . ' ' . escapeshellarg($rendererPrefix));
+foreach (glob($rendererPrefix . '-*.png') ?: [] as $png) {
     echo "预览 : {$png}\n";
 }
