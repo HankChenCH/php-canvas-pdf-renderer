@@ -19,18 +19,9 @@ final class TfpdfTest extends TestCase
 
     public static function setUpBeforeClass(): void
     {
-        // FPDF_FONTPATH 在 tFPDF 构造期读取；隔离到临时目录，避免把 metrics 缓存写进 vendor/
-        self::$fontDir = sys_get_temp_dir() . '/canvas-pdf-renderer-test-fonts';
-        if (!is_dir(self::$fontDir . '/unifont')) {
-            mkdir(self::$fontDir . '/unifont', 0777, true);
-            $vendorFont = dirname((new \ReflectionClass(\tFPDF::class))->getFileName()) . '/font';
-            foreach (glob($vendorFont . '/*.php') ?: [] as $f) {
-                copy($f, self::$fontDir . '/' . basename($f));
-            }
-        }
-        if (!defined('FPDF_FONTPATH')) {
-            define('FPDF_FONTPATH', self::$fontDir . '/');
-        }
+        // 字体目录走运行时同一条装配路径（Tfpdf 构造期触发 fontDir()）：可写 unifont
+        // + 核心字体 metric 在位 + FPDF_FONTPATH 定义，metrics 缓存不写进 vendor/
+        self::$fontDir = Tfpdf::fontDir();
     }
 
     /** 96x96pt 素页（pt 单位 + 关压缩 = 内容流可直接断言；-r 96 栅格恰好 1:1 回像素） */
