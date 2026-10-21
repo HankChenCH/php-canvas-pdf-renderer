@@ -1,0 +1,71 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: PHPUnit (PHP ${{ matrix.php }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.3'
+            experimental: false
+          - php: '8.4'
+            experimental: true
+    continue-on-error: ${{ matrix.experimental }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # companion 包：核心包以 path repository（../php-canvas-next）引用，
+      # CI 中 checkout 到工作区子目录并重写 path 指向
+      - name: Checkout core (php-canvas-next)
+        uses: actions/checkout@v4
+        with:
+          repository: HankChenCH/php-canvas-next
+          path: php-canvas-next
+
+      # 核心包已去硬编码 version:path 仓库的包版本由 git tag 推导,
+      # main HEAD 只能解析出 dev-main 不满足 ^2.1 约束——切到最新 release tag
+      - name: Checkout core at latest release tag
+        run: |
+          git -C php-canvas-next fetch --tags --force
+          git -C php-canvas-next checkout "$(git -C php-canvas-next describe --tags --abbrev=0)"
+
+      - name: Install poppler and CJK font
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y poppler-utils fonts-ipafont-gothic
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, exif, intl
+          coverage: none
+
+      # CJK 探针字体（开放点 6 定稿）：与 go 侧同字体（fonts-ipafont-gothic，单体 .ttf
+      # 满足 TTF-only 门槛；fonts-noto-cjk 是 .ttc 会被魔数防线拒收）
+      - name: Export CJK test font
+        run: echo "CANVAS_PDF_TEST_CJK_FONT=/usr/share/fonts/truetype/ipafont-gothic/ipag.ttf" >> "$GITHUB_ENV"
+
+      - name: Point path repository at checked-out core
+        run: composer config repos.php-canvas-next path ./php-canvas-next
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Run tests
+        run: composer test
