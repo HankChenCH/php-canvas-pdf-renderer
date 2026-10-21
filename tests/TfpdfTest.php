@@ -4,15 +4,16 @@ declare(strict_types=1);
 
 namespace HankChen\CanvasNext\Renderer\Pdf\Tests;
 
+use HankChen\CanvasNext\Renderer\Pdf\Tests\Support\PopplerPdfCase;
 use HankChen\CanvasNext\Renderer\Pdf\Tfpdf;
-use PHPUnit\Framework\TestCase;
 
 /**
  * tFPDF 子类行为测试：四 addon 并入的操作符面（与 go-pdf/fpdf 逐字同源）+ 输出 header 版本
  * + desc getter + 族名安全合成。操作符断言直读未压缩内容流（SetCompression(false)）；
  * poppler 栅格级断言属渲染器本体票（本段=子类行为），spike 已用 poppler 四件套实测背书。
+ * 继承 PopplerPdfCase 只为共享 CJK 探针（probeCjkFont）。
  */
-final class TfpdfTest extends TestCase
+final class TfpdfTest extends PopplerPdfCase
 {
     /** 测试字体路径：隔离 fontpath（可写 unifont 有 metrics 缓存 + 核心字体 metric 文件在位） */
     private static string $fontDir;
@@ -43,20 +44,7 @@ final class TfpdfTest extends TestCase
         return substr($bytes, $pos + 7, $end - $pos - 7);
     }
 
-    /** CJK 探针字体：环境变量优先 → 系统 TTF 候选 → null（调用侧 markTestSkipped；镜像 go 侧纪律） */
-    private static function cjkFont(): ?string
-    {
-        $env = getenv('CANVAS_PDF_TEST_CJK_FONT');
-        if (is_string($env) && $env !== '' && is_file($env)) {
-            return $env;
-        }
-        foreach (['/usr/share/fonts/truetype/ipafont-gothic/ipag.ttf', '/System/Library/Fonts/Supplemental/Arial Unicode.ttf'] as $candidate) {
-            if (is_file($candidate)) {
-                return $candidate;
-            }
-        }
-        return null;
-    }
+    /** CJK 探针字体：共享探针在 PopplerPdfCase::probeCjkFont（env 优先 → 系统候选 → skip） */
 
     public function testSetAlphaEmitsExtGStateAndBumpsHeader(): void
     {
@@ -138,10 +126,7 @@ final class TfpdfTest extends TestCase
 
     public function testGetFontDescForTtfAndCore(): void
     {
-        $font = self::cjkFont();
-        if ($font === null) {
-            self::markTestSkipped('CJK TTF 缺席：设 CANVAS_PDF_TEST_CJK_FONT=<单体 .ttf>（CI 装 fonts-ipafont-gothic）');
-        }
+        $font = self::probeCjkFont();
         $pdf = self::newDoc();
         $base = 'descprobe.ttf';
         copy($font, self::$fontDir . '/unifont/' . $base);
@@ -172,10 +157,7 @@ final class TfpdfTest extends TestCase
 
     public function testRawFontPathNeverEntersPdfBytes(): void
     {
-        $font = self::cjkFont();
-        if ($font === null) {
-            self::markTestSkipped('CJK TTF 缺席：设 CANVAS_PDF_TEST_CJK_FONT=<单体 .ttf>（CI 装 fonts-ipafont-gothic）');
-        }
+        $font = self::probeCjkFont();
         $pdf = self::newDoc();
         $base = 'pathprobe.ttf';
         copy($font, self::$fontDir . '/unifont/' . $base);

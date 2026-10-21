@@ -270,6 +270,10 @@ final class PdfRenderer extends AbstractRenderer implements ShapeCapableRenderer
         int $dh,
         \Closure $clip
     ): void {
+        if ($dw <= 0 || $dh <= 0) {
+            return; // dstRect 空矩形：防护不画（docblock 契约，与 drawImageMasked 显式早退同面）
+        }
+
         $doc = $this->doc();
 
         $data = @file_get_contents($src);
@@ -553,7 +557,7 @@ final class PdfRenderer extends AbstractRenderer implements ShapeCapableRenderer
         if ($magic === 'OTTO') {
             throw new \InvalidArgumentException("字体 {$fontFile} 为 CFF/PostScript 轮廓(OTF):仅支持 TrueType(glyf) 单体 .ttf");
         }
-        $version = (int) (unpack('N', str_pad($magic, 4, "\x00"))[1] ?? 0);
+        $version = (int) unpack('N', str_pad($magic, 4, "\x00"))[1];
         if (!in_array($version, [0x00010000, 0x74727565], true)) {
             $magicHex = strtoupper(bin2hex($magic));
             throw new \InvalidArgumentException("字体 {$fontFile} 不是 TrueType 字体(魔数 0x{$magicHex} 不识):TTF-only 门槛拒收");

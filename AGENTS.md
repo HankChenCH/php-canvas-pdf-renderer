@@ -33,7 +33,7 @@ php scripts/visual-check-pdf.php out.pdf   # 目验样张（样张 + pdftoppm �
 
 ## Rules and gotchas
 
-- **依赖核心包**：`"hankchen/php-canvas-next": "^2.1"` 走 Packagist；本地跨包联调临时 `composer config repositories.php-canvas-next path ../php-canvas-next` 且**勿提交**（本地核心在分支 tip 时 path 只解析出 `dev-<branch>` 不满足 `^`，此时直接走 Packagist）。composer.lock 不入库。
+- **依赖核心包**：`"hankchen/php-canvas-next": "^2.2"` 走 Packagist；本地跨包联调临时 `composer config repositories.php-canvas-next path <核心目录>` 且**勿提交**。composer 的 path 版本猜测器**只在 detached HEAD 认精确 tag**——核心在特性分支 tip 时 path 只解析出 `dev-<branch>` 不满足 `^`，解法 = 给核心开 detached worktree 停在目标 tag（`git worktree add <wt> v2.2.0`）后 path 指向该 worktree（工票 03 Answer 备查）；核心无未发版需求时直接走 Packagist。composer.lock 不入库。
 - **依赖方向单向**：本包只可依赖核心包 + setasign/tfpdf；不得 import php-canvas-image-renderer。共享小件（颜色/EXIF 等）= 同式复制注明出处（go 先例同款），复制面膨胀再议抽共享包。
 - **TTF-only 硬门槛**：tFPDF 的 UTF-8 路径只吃 TrueType（glyf）`.ttf`；**ttcf/OTTO(CFF)/垃圾魔数在 tFPDF 内部是 `die()` 硬退进程**（ttfonts.php getMetrics——不可 try/catch、无错误位；与 go 侧「静默吞错留到 SetFont 才爆」形态不同，两者都不可接受）。`registerFont` 已把嗅探前置：白名单 = 0x00010000 / 'true'（与 ttfonts 同面），ttcf/OTTO/其余魔数在进 AddFont 前拒收为可读 InvalidArgumentException。**已知残面**：魔数过而表结构损坏的字体仍可能触发 tFPDF 深层 die（应用层不重写 TTF 解析器，残面与 spike 结论一致）。字体扩展名不可信，按魔数判定。
 - **AddFont 文件路径解析与字体目录装配（已内建）**：`AddFont($family,$style,$file,true)` 的 `$file` 相对 `fontpath/unifont/` 解析——绝对路径直传会被拼成 `fontpath/unifont/<绝对路径>` 后 fopen 失败 die（spike 实测）。`Tfpdf::fontDir()` 进程级装配一次（构造期先行触发，晚定义不追溯已建实例——本包实例全部经此构造，无此缝）：FPDF_FONTPATH → 系统临时目录/canvas-pdf-renderer-fonts，核心字体 metric 自 vendor 软链、unifont/ 为落位与缓存工作区；渲染器 `registerFont` 把字体以合成名软链/复制进 unifont/、basename 进 AddFont，metrics 缓存以合成名键（跨目录同名无碰撞）。宿主预定义 FPDF_FONTPATH 时按宿主配置走。

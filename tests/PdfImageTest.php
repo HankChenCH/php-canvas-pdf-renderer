@@ -104,13 +104,17 @@ class PdfImageTest extends PopplerPdfCase
 
     public function testDrawImageEmptyDstRectSkipped(): void
     {
-        // dstRect 空矩形防护不画（原语级，dw/dh ≤0）：渲染成功
+        // dstRect 空矩形防护不画（原语级，dw/dh ≤ 0）：渲染成功且**零墨迹**——
+        // 防护缺席时会以零缩放矩阵发射 Image（结果不可见但发射面在），本断言
+        // 钉的是 docblock「防护不画」的结果契约
         $r = new BarePdfRenderer();
         $r->begin(10, 10);
         $src = Fixtures::solidPng(4, 4, self::RED);
         $r->drawImage($src, 0, 0, 0, 0, 0, 0, 0, 0);
         $pdf = $r->end();
         self::assertNotSame('', $pdf);
+        $grid = self::rasterize($pdf, 10, 10);
+        self::assertFalse(self::boxHasInk($grid, [0, 0, 10, 10], 128), '空 dstRect 应零墨迹（防护不画）');
     }
 
     public function testDrawImageSrcRectOutsideSilent(): void
@@ -163,6 +167,7 @@ class PdfImageTest extends PopplerPdfCase
         Fixtures::requireGd();
         $cases = [
             // [orientation, dstW, dstH, 观察方向分界是否竖线(左右分色), first, second]
+            [1, 8, 16, false, self::RED, self::BLUE], // 恒等：无 EXIF 变换，上下带原样
             [6, 16, 8, true, self::BLUE, self::RED],  // 顺时针 90°：下带(蓝)转到左
             [8, 16, 8, true, self::RED, self::BLUE],  // 逆时针 90°：上带(红)转到左
             [5, 16, 8, true, self::RED, self::BLUE],  // 转置：上行(红)到左

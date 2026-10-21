@@ -52,7 +52,7 @@ final class Exif
                 return 1;
             }
             if ($marker === "\xE1" && $segLen >= 8 && substr($data, $pos + 4, 6) === "Exif\x00\x00") {
-                return self::parseTiffOrientation(substr($data, $pos + 10, $pos + 2 + $segLen - $pos - 10));
+                return self::parseTiffOrientation(substr($data, $pos + 10, $segLen - 8));
             }
             $pos += 2 + $segLen;
         }

@@ -35,7 +35,7 @@ final class Rgba
             }
             $h = $doubled;
         } elseif ($len !== 6 && $len !== 8) {
-            throw new \InvalidArgumentException(sprintf('无法解析颜色 "%s": 支持 #rgb/#rgba/#rrggbbaa/#rrggbb/#rrggbbaa 形态', $hex));
+            throw new \InvalidArgumentException(sprintf('无法解析颜色 "%s": 支持 #rgb/#rgba/#rrggbb/#rrggbbaa 形态', $hex));
         }
 
         $c = [0, 0, 0, 0];

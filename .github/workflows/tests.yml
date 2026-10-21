@@ -38,7 +38,7 @@ jobs:
           path: php-canvas-next
 
       # 核心包已去硬编码 version:path 仓库的包版本由 git tag 推导,
-      # main HEAD 只能解析出 dev-main 不满足 ^2.1 约束——切到最新 release tag
+      # main HEAD 只能解析出 dev-main 不满足 ^2.2 约束——切到最新 release tag
       - name: Checkout core at latest release tag
         run: |
           git -C php-canvas-next fetch --tags --force
