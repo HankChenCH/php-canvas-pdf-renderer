@@ -72,6 +72,9 @@ class Tfpdf extends \tFPDF
             if (is_file($target)) {
                 continue;
             }
+            if (is_link($target)) {
+                @unlink($target); // 悬空软链（旧源被清理）：重建而非撞 EEXIST
+            }
             if (!@symlink($metric, $target) && !@copy($metric, $target)) {
                 throw new \RuntimeException("核心字体 metric 落位失败: {$metric} → {$target}");
             }
