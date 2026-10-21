@@ -1,0 +1,34 @@
+{
+    "name": "hankchen/php-canvas-pdf-renderer",
+    "description": "tFPDF-based PDF renderer backend for hankchen/php-canvas-next",
+    "type": "library",
+    "license": "MIT",
+    "keywords": ["canvas", "pdf", "tfpdf", "renderer"],
+    "homepage": "https://github.com/HankChenCH/php-canvas-pdf-renderer",
+    "autoload": {
+        "psr-4": {
+            "HankChen\\CanvasNext\\Renderer\\Pdf\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "HankChen\\CanvasNext\\Renderer\\Pdf\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    },
+    "authors": [
+        {
+            "name": "HankChen"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "hankchen/php-canvas-next": "^2.2",
+        "setasign/tfpdf": "^1.34"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.6"
+    }
+}
